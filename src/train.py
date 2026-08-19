@@ -13,7 +13,14 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
-from src.data_utils import build_feature_frame, feature_columns, get_day_columns, read_m5_data
+from src.data_utils import (
+    LAGS,
+    ROLLING_WINDOWS,
+    build_feature_frame,
+    feature_columns,
+    get_day_columns,
+    read_m5_data,
+)
 from src.models import create_model
 
 
@@ -45,20 +52,29 @@ def main() -> None:
 
     max_day = max(int(col[2:]) for col in get_day_columns(sales))
     start_day = max(1, max_day - args.last_n_days + 1)
+    # Лаги считаются внутри выбранного окна, поэтому берём запас дней на "разогрев".
+    warmup_days = max(LAGS) + max(ROLLING_WINDOWS)
 
     frame, encoders = build_feature_frame(
         sales=sales,
         calendar=calendar,
         prices=prices,
-        start_day=start_day,
+        start_day=max(1, start_day - warmup_days),
         end_day=max_day,
     )
-    required_lags = ["lag_7", "lag_14", "lag_28", "rolling_mean_7", "rolling_mean_28"]
+    required_lags = [f"lag_{lag}" for lag in LAGS] + [f"rolling_mean_{window}" for window in ROLLING_WINDOWS]
     frame = frame.dropna(subset=["sales", *required_lags])
+    frame = frame.loc[frame["d_num"] >= start_day]
     features = feature_columns(frame)
 
-    train_frame: pd.DataFrame = frame.query("d_num < @valid_from").copy()
-    valid_frame: pd.DataFrame = frame.query("d_num >= @valid_from").copy()
+    valid_from = max_day - args.valid_days + 1
+    train_frame: pd.DataFrame = frame.loc[frame["d_num"] < valid_from].copy()
+    valid_frame: pd.DataFrame = frame.loc[frame["d_num"] >= valid_from].copy()
+
+    if train_frame.empty:
+        raise SystemExit(
+            f"Обучающая выборка пуста: --last-n-days={args.last_n_days} <= --valid-days={args.valid_days}."
+        )
 
     model = create_model(random_state=args.random_state)
     model.fit(train_frame[features], train_frame["sales"])

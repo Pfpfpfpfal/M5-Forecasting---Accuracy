@@ -61,6 +61,7 @@ def forecast_horizon(
     max_day = max(int(col[2:]) for col in get_day_columns(sales))
     frame: pd.DataFrame = make_history(sales, history_days)
     base_ids: pd.DataFrame = sales.loc[:, ID_COLS].copy()
+    row_ids = cast(Any, sales["id"]).astype(str).to_numpy()
     predictions: list[NDArray[np.float64]] = []
 
     for step in range(1, horizon + 1):
@@ -75,6 +76,9 @@ def forecast_horizon(
         scoring = add_lag_features(scoring)
         scoring = apply_category_encoders(scoring, encoders)
         current: pd.DataFrame = scoring.loc[scoring["d_num"].eq(d_num)].copy()
+        # add_lag_features сортирует строки по id, поэтому возвращаем порядок строк sales.
+        current.index = pd.Index(cast(Any, current["id"]).astype(str))
+        current = current.loc[row_ids]
 
         pred = cast(NDArray[np.float64], np.clip(np.asarray(model.predict(current[features]), dtype=float), 0, None))
         future["sales"] = pred
